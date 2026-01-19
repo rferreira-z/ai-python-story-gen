@@ -11,8 +11,12 @@ from app.core.database import get_db
 from app.core.exceptions import ForbiddenError, UnauthorizedError
 from app.core.security import decode_token
 from app.models.user import User
+from app.repositories.story import StoryRepository
+from app.repositories.story_universe import StoryUniverseRepository
 from app.repositories.user import UserRepository
 from app.services.auth import AuthService
+from app.services.story import StoryService
+from app.services.story_universe import StoryUniverseService
 from app.services.user import UserService
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.api_v1_prefix}/auth/login")
@@ -85,3 +89,34 @@ async def get_current_admin_user(
     if not current_user.is_admin:
         raise ForbiddenError("Admin privileges required")
     return current_user
+
+
+async def get_story_universe_repository(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> StoryUniverseRepository:
+    """Get a StoryUniverseRepository instance."""
+    return StoryUniverseRepository(db)
+
+
+async def get_story_repository(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> StoryRepository:
+    """Get a StoryRepository instance."""
+    return StoryRepository(db)
+
+
+async def get_story_universe_service(
+    repo: Annotated[StoryUniverseRepository, Depends(get_story_universe_repository)],
+) -> StoryUniverseService:
+    """Get a StoryUniverseService instance."""
+    return StoryUniverseService(repo)
+
+
+async def get_story_service(
+    repo: Annotated[StoryRepository, Depends(get_story_repository)],
+    universe_repo: Annotated[
+        StoryUniverseRepository, Depends(get_story_universe_repository)
+    ],
+) -> StoryService:
+    """Get a StoryService instance."""
+    return StoryService(repo, universe_repo)
