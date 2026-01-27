@@ -29,5 +29,19 @@ services:
     volumes:
       - ./app:/app/app
 
+  worker:
+    build: .
+    command: python -m worker.main
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-app_db}
+      WORKER_NAME: ${WORKER_NAME:-langgraph-worker}
+      CHECKPOINTER_POOL_SIZE: ${CHECKPOINTER_POOL_SIZE:-5}
+      DEBUG: ${DEBUG:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./worker:/app/worker
+
 volumes:
   postgres_data:

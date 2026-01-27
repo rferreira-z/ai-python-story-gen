@@ -13,6 +13,7 @@ A production-ready FastAPI backend with PostgreSQL (SQL + pgvector), user manage
 - **Docker Compose** - containerized development environment
 - **Alembic Migrations** - async database migrations
 - **Pydantic v2** - request/response validation
+- **LangGraph Worker** - independent AI workflow processing with PostgreSQL checkpointing
 
 ## Project Structure
 
@@ -42,6 +43,15 @@ app/
 │       ├── users.py        # User endpoints
 │       └── health.py       # Health check
 └── migrations/             # Alembic migrations
+
+worker/                     # Independent LangGraph worker
+├── main.py                 # Worker entry point
+├── core/
+│   ├── config.py           # Worker settings
+│   └── checkpointer.py     # AsyncPostgresSaver setup
+└── graphs/
+    ├── base.py             # Base graph types
+    └── example_graph.py    # Example StateGraph
 ```
 
 ## Requirements
@@ -203,6 +213,95 @@ docker build -t fastapi-app .
 | `ALGORITHM`                 | JWT algorithm                      | HS256                    |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token lifetime            | 30                       |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token lifetime             | 7                        |
+
+## LangGraph Worker
+
+The project includes an independent LangGraph worker for running AI workflows with persistent state.
+
+### Architecture
+
+```
+┌─────────────┐         ┌─────────────┐
+│  FastAPI    │         │  LangGraph  │
+│    API      │         │   Worker    │
+└──────┬──────┘         └──────┬──────┘
+       │                       │
+       └───────────┬───────────┘
+                   │
+           ┌───────┴───────┐
+           │  PostgreSQL   │
+           │  (shared DB)  │
+           └───────────────┘
+```
+
+- **Independent processes**: API and worker run separately
+- **Shared database**: Both use the same PostgreSQL instance
+- **Persistent state**: Worker uses PostgresSaver checkpointer for durable graph state
+
+### Running the Worker
+
+```bash
+# Start PostgreSQL first
+docker compose up -d db
+
+# Run the worker
+python -m worker.main
+```
+
+### With Docker Compose
+
+```bash
+# Start all services (db, app, worker)
+docker compose up
+```
+
+### Creating Custom Graphs
+
+1. Create a new file in `worker/graphs/`:
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.base import BaseCheckpointSaver
+
+class MyState(TypedDict):
+    messages: Annotated[list[dict], add_messages]
+
+async def my_node(state: MyState) -> dict:
+    return {"messages": [{"role": "assistant", "content": "Hello!"}]}
+
+def create_my_graph(checkpointer: BaseCheckpointSaver | None = None):
+    builder = StateGraph(MyState)
+    builder.add_node("my_node", my_node)
+    builder.add_edge(START, "my_node")
+    builder.add_edge("my_node", END)
+    return builder.compile(checkpointer=checkpointer)
+```
+
+2. Use the graph with the checkpointer:
+
+```python
+from worker.core.checkpointer import get_checkpointer
+from worker.graphs.my_graph import create_my_graph
+
+async def run():
+    async with get_checkpointer() as checkpointer:
+        graph = create_my_graph(checkpointer)
+        result = await graph.ainvoke(
+            {"messages": [{"role": "user", "content": "Hi"}]},
+            config={"configurable": {"thread_id": "my-thread"}}
+        )
+```
+
+### Worker Environment Variables
+
+| Variable                | Description                  | Default           |
+| ----------------------- | ---------------------------- | ----------------- |
+| `WORKER_NAME`           | Worker instance name         | langgraph-worker  |
+| `CHECKPOINTER_POOL_SIZE`| PostgreSQL connection pool   | 5                 |
+| `DATABASE_URL`          | PostgreSQL connection URL    | (same as app)     |
+| `DEBUG`                 | Enable debug logging         | false             |
 
 ## Security Notes
 
